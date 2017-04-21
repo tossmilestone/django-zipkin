@@ -2,6 +2,7 @@ import logging
 import django
 import json
 from django_zipkin._thrift.zipkinCore.constants import SERVER_RECV, SERVER_SEND
+from django_zipkin.scribe_writer import ScribeWriter
 from zipkin_data import ZipkinData, ZipkinId
 from data_store import default as default_data_store
 from id_generator import default as default_id_generator
@@ -46,11 +47,12 @@ class ZipkinDjangoRequestParser(object):
 
 
 class ZipkinMiddleware(object):
-    def __init__(self, store=None, request_parser=None, id_generator=None, api=None):
+    def __init__(self, store=None, request_parser=None, id_generator=None, api=None, writer=None):
         self.store = store or default_data_store
         self.request_parser = request_parser or ZipkinDjangoRequestParser()
         self.id_generator = id_generator or default_id_generator
         self.api = api or default_api
+        self.api.writer = writer or ScribeWriter(settings.ZIPKIN_HOST, settings.ZIPKIN_PORT)
         self.logger = logging.getLogger(settings.ZIPKIN_LOGGER_NAME)
 
     def process_request(self, request):
@@ -105,7 +107,10 @@ class ZipkinMiddleware(object):
             self.api.record_event(SERVER_SEND)
             self.api.record_key_value(constants.ANNOTATION_HTTP_STATUSCODE, response.status_code)
             if data.is_tracing():
-                self.logger.info(self.api.build_log_message())
+                if settings.ZIPKIN_SCRIBE_ENABLE:
+                    self.api.submit_span()
+                else:
+                    self.logger.info(self.api.build_log_message())
         except Exception:
             logging.root.exception('ZipkinMiddleware.process_response failed')
         return response
